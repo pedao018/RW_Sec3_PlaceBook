@@ -2,19 +2,29 @@ package com.raywenderlich.rw_sec3_placebook
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
 import androidx.core.app.ActivityCompat
+import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.location.*
 
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.SupportMapFragment
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.MarkerOptions
+import com.google.android.gms.maps.model.PointOfInterest
+import com.google.android.libraries.places.api.Places
+import com.google.android.libraries.places.api.model.Place
+import com.google.android.libraries.places.api.net.FetchPhotoRequest
+import com.google.android.libraries.places.api.net.FetchPlaceRequest
+import com.google.android.libraries.places.api.net.PlacesClient
+import com.raywenderlich.adapter.BookmarkInfoWindowAdapter
 import com.raywenderlich.rw_sec3_placebook.databinding.ActivityMapsBinding
 
 class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
@@ -22,6 +32,7 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
     private lateinit var map: GoogleMap
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private var locationRequest: LocationRequest? = null
+    private lateinit var placesClient: PlacesClient
     private lateinit var binding: ActivityMapsBinding
 
     companion object {
@@ -41,6 +52,7 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
             .findFragmentById(R.id.map) as SupportMapFragment
         mapFragment.getMapAsync(this)
         setupLocationClient()
+        setupPlacesClient()
     }
 
     /**
@@ -55,6 +67,22 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
     override fun onMapReady(googleMap: GoogleMap) {
         map = googleMap
         getCurrentLocation()
+        map.setInfoWindowAdapter(BookmarkInfoWindowAdapter(this))
+        map.setOnPoiClickListener {
+            displayPoi(it)
+        }
+    }
+
+    private fun setupLocationClient() {
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+    }
+
+    private fun setupPlacesClient() {
+        Places.initialize(
+            applicationContext,
+            getString(R.string.google_maps_key)
+        )
+        placesClient = Places.createClient(this)
     }
 
     private fun getCurrentLocation() {
@@ -79,8 +107,87 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
-    private fun setupLocationClient() {
-        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+    private fun displayPoi(pointOfInterest: PointOfInterest) {
+        displayPoi_GetPlaceStep(pointOfInterest)
+    }
+
+    private fun displayPoi_GetPlaceStep(pointOfInterest: PointOfInterest) {
+        val placeId = pointOfInterest.placeId
+        val placeFields = listOf(
+            Place.Field.ID,
+            Place.Field.NAME,
+            Place.Field.PHONE_NUMBER,
+            Place.Field.PHOTO_METADATAS,
+            Place.Field.ADDRESS,
+            Place.Field.LAT_LNG
+        )
+        val request = FetchPlaceRequest.builder(placeId, placeFields).build()
+        placesClient.fetchPlace(request)
+            .addOnSuccessListener { response ->
+                val place = response.place
+                displayPoi_GetPhotoStep(place)
+            }
+            .addOnFailureListener { exception ->
+                if (exception is ApiException) {
+                    val statusCode = exception.statusCode
+                    Log.e(
+                        TAG, "Place not found: " + exception.message + ", " +
+                                "statusCode: " + statusCode
+                    )
+                }
+            }
+    }
+
+    private fun displayPoi_GetPhotoStep(place: Place) {
+        val photoMetadata = place.getPhotoMetadatas()?.get(0)
+        if (photoMetadata == null) {
+            displayPoi_DisplayStep(place, null)
+            return
+        }
+        val photoRequest = FetchPhotoRequest
+            .builder(photoMetadata)
+            .setMaxWidth(resources.getDimensionPixelSize(R.dimen.default_image_width))
+            .setMaxHeight(resources.getDimensionPixelSize(R.dimen.default_image_height))
+            .build()
+        placesClient.fetchPhoto(photoRequest)
+            .addOnSuccessListener { fetchPhotoResponse ->
+                val bitmap = fetchPhotoResponse.bitmap
+                displayPoi_DisplayStep(place, bitmap)
+            }
+            .addOnFailureListener { exception ->
+                if (exception is ApiException) {
+                    val statusCode = exception.statusCode
+                    Log.e(
+                        TAG, "Place not found: " + exception.message + ", "
+                                + "statusCode: " + statusCode
+                    )
+                }
+            }
+    }
+
+    private fun displayPoi_DisplayStep(place: Place, photo: Bitmap?) {
+        //Way 1: add icon photo to addMarker
+        /*val iconPhoto = if (photo == null) {
+            BitmapDescriptorFactory.defaultMarker()
+        } else {
+            BitmapDescriptorFactory.fromBitmap(photo)
+        }
+        map.addMarker(
+            MarkerOptions()
+                .position(place.latLng as LatLng)
+                .icon(iconPhoto)
+                .title(place.name)
+                .snippet(place.phoneNumber)
+        )*/
+
+        //Way 2: user InfoWindowAdapter to addMarker
+        val marker = map.addMarker(
+            MarkerOptions()
+                .position(place.latLng as LatLng)
+                .title(place.name)
+                .snippet(place.phoneNumber)
+        )
+        marker?.tag = photo
     }
 
     //Xin quyền (Permissions)
@@ -93,7 +200,11 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
             requestLocationPermissions()
         } else {
             //Nếu user deny quyền thì hiển thị Toast nói lý do
-            Toast.makeText(this, "Hi there! Accept it, Pleasessssssss......", Toast.LENGTH_SHORT)
+            Toast.makeText(
+                this,
+                "Hi there! Accept it, Pleasessssssss......",
+                Toast.LENGTH_SHORT
+            )
                 .show()
             requestLocationPermissions()
         }

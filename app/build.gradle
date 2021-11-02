@@ -48,4 +48,6 @@ dependencies {
     //Sử dụng map api
     implementation "com.google.android.gms:play-services-maps:$maps_services_version"
     implementation "com.google.android.gms:play-services-location:$location_services_version"
+    implementation "com.google.android.libraries.places:places:2.4.0"
+
 }
