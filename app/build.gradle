@@ -1,6 +1,7 @@
 plugins {
     id 'com.android.application'
     id 'kotlin-android'
+    id 'kotlin-kapt'
 }
 
 android {
@@ -50,4 +51,16 @@ dependencies {
     implementation "com.google.android.gms:play-services-location:$location_services_version"
     implementation "com.google.android.libraries.places:places:2.4.0"
 
+    // 1 Adds Kotlin extensions to make it easier to bind ViewModels to Activities. You’ll learn more about this later.
+    implementation "androidx.activity:activity-ktx:1.1.0"
+    // 2 Adds the main Lifecycle classes along with extensions such as LiveData.
+    implementation "androidx.lifecycle:lifecycle-viewmodel-ktx:$lifecycle_version"
+    // 3 Adds the Room library.
+    implementation "androidx.room:room-runtime:$room_version"
+    // 4 Adds the Kotlin annotation processor for the Room library.
+    kapt "androidx.room:room-compiler:$room_version"
+
+    //Coroutine
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:$coroutines_version"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:$coroutines_version"
 }

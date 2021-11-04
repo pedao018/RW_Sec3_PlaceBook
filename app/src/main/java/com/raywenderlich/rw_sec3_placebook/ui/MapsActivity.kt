@@ -1,4 +1,4 @@
-package com.raywenderlich.rw_sec3_placebook
+package com.raywenderlich.rw_sec3_placebook.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -7,6 +7,7 @@ import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
+import androidx.activity.viewModels
 import androidx.core.app.ActivityCompat
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.location.*
@@ -15,17 +16,18 @@ import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.SupportMapFragment
-import com.google.android.gms.maps.model.BitmapDescriptorFactory
-import com.google.android.gms.maps.model.LatLng
-import com.google.android.gms.maps.model.MarkerOptions
-import com.google.android.gms.maps.model.PointOfInterest
+import com.google.android.gms.maps.model.*
 import com.google.android.libraries.places.api.Places
 import com.google.android.libraries.places.api.model.Place
 import com.google.android.libraries.places.api.net.FetchPhotoRequest
 import com.google.android.libraries.places.api.net.FetchPlaceRequest
 import com.google.android.libraries.places.api.net.PlacesClient
-import com.raywenderlich.adapter.BookmarkInfoWindowAdapter
+import com.raywenderlich.rw_sec3_placebook.R
+import com.raywenderlich.rw_sec3_placebook.adapter.BookmarkInfoWindowAdapter
 import com.raywenderlich.rw_sec3_placebook.databinding.ActivityMapsBinding
+import com.raywenderlich.rw_sec3_placebook.viewmodel.MapsViewModel
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 
 class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
 
@@ -34,6 +36,12 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
     private var locationRequest: LocationRequest? = null
     private lateinit var placesClient: PlacesClient
     private lateinit var binding: ActivityMapsBinding
+
+    /*A big benefit of using the ViewModel class is that it is aware of lifecycles. In this case, by viewModels<MapsViewModel> is a lazy delegate that creates a new mapsViewModel only the first time the Activity is created.
+    If a configuration change happens, such as a screen rotation, by viewModels<MapsViewModel> returns the previously created MapsViewModel.
+    It is this viewModels delegate that requires the Java 8 options that were added in the build.gradle file above.
+    * */
+    private val mapsViewModel by viewModels<MapsViewModel>()
 
     companion object {
         private const val REQUEST_LOCATION = 1
@@ -66,10 +74,18 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
      */
     override fun onMapReady(googleMap: GoogleMap) {
         map = googleMap
+        setupMapListeners()
+        createBookmarkMarkerObserver()
         getCurrentLocation()
+    }
+
+    private fun setupMapListeners() {
         map.setInfoWindowAdapter(BookmarkInfoWindowAdapter(this))
         map.setOnPoiClickListener {
             displayPoi(it)
+        }
+        map.setOnInfoWindowClickListener {
+            handleInfoWindowClick(it)
         }
     }
 
@@ -187,7 +203,43 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
                 .title(place.name)
                 .snippet(place.phoneNumber)
         )
-        marker?.tag = photo
+        marker?.tag = PlaceInfo(place, photo)
+    }
+
+    private fun handleInfoWindowClick(marker: Marker) {
+        val placeInfo = (marker.tag as PlaceInfo)
+        if (placeInfo.place != null) {
+            GlobalScope.launch {
+                mapsViewModel.addBookmarkFromPlace(
+                    place = placeInfo.place,
+                    image = placeInfo.image
+                )
+            }
+            marker.remove()
+        }
+    }
+
+    private fun createBookmarkMarkerObserver() {
+        mapsViewModel.getBookmarkMarkerView()?.observe(this,
+            {
+                map.clear()
+                displayAllBookmarks(it)
+            })
+    }
+
+    private fun displayAllBookmarks(bookmarks: List<MapsViewModel.BookmarkMarkerView>) {
+        bookmarks.forEach { addPlaceMarker(it) }
+    }
+
+    private fun addPlaceMarker(boomark: MapsViewModel.BookmarkMarkerView): Marker? {
+        val marker = map.addMarker(
+            MarkerOptions()
+                .position(boomark.location)
+                .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE))
+                .alpha(0.8f)
+        )
+        marker?.tag = boomark
+        return marker
     }
 
     //Xin quyền (Permissions)
@@ -234,6 +286,11 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
             }
         }
     }
+
+    class PlaceInfo(
+        val place: Place? = null,
+        val image: Bitmap? = null
+    )
 
     //getCurrentLocation() với Location Request
     private fun getCurrentLocation_LocationRequest() {
