@@ -1,6 +1,7 @@
 package com.raywenderlich.rw_sec3_placebook.ui
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import androidx.appcompat.app.AppCompatActivity
@@ -46,6 +47,8 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
     companion object {
         private const val REQUEST_LOCATION = 1
         private const val TAG = "MapsActivity"
+        const val EXTRA_BOOKMARK_ID =
+            "com.raywenderlich.placebook.EXTRA_BOOKMARK_ID"
     }
 
 
@@ -204,18 +207,30 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
                 .snippet(place.phoneNumber)
         )
         marker?.tag = PlaceInfo(place, photo)
+        marker?.showInfoWindow()
     }
 
     private fun handleInfoWindowClick(marker: Marker) {
-        val placeInfo = (marker.tag as PlaceInfo)
-        if (placeInfo.place != null) {
-            GlobalScope.launch {
-                mapsViewModel.addBookmarkFromPlace(
-                    place = placeInfo.place,
-                    image = placeInfo.image
-                )
+        when (marker.tag) {
+            is PlaceInfo -> {
+                val placeInfo = (marker.tag as PlaceInfo)
+                if (placeInfo.place != null) {
+                    GlobalScope.launch {
+                        mapsViewModel.addBookmarkFromPlace(
+                            place = placeInfo.place,
+                            image = placeInfo.image
+                        )
+                    }
+                    marker.remove()
+                }
             }
-            marker.remove()
+            is MapsViewModel.BookmarkMarkerView -> {
+                val bookmarkMarkerView = (marker.tag as MapsViewModel.BookmarkMarkerView)
+                marker.hideInfoWindow()
+                bookmarkMarkerView.id?.let { id ->
+                    startBookmarkDetails(id)
+                }
+            }
         }
     }
 
@@ -235,11 +250,19 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
         val marker = map.addMarker(
             MarkerOptions()
                 .position(boomark.location)
+                .title(boomark.name)
+                .snippet(boomark.phone)
                 .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE))
                 .alpha(0.8f)
         )
         marker?.tag = boomark
         return marker
+    }
+
+    private fun startBookmarkDetails(bookmarkId: Long) {
+        val intent = Intent(this, BookmarkDetailsActivity::class.java)
+        intent.putExtra(EXTRA_BOOKMARK_ID, bookmarkId)
+        startActivity(intent)
     }
 
     //Xin quyền (Permissions)
