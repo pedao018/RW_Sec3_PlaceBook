@@ -4,12 +4,15 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.location.Location
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.viewModels
+import androidx.appcompat.app.ActionBarDrawerToggle
 import androidx.core.app.ActivityCompat
+import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.location.*
 
@@ -25,6 +28,7 @@ import com.google.android.libraries.places.api.net.FetchPlaceRequest
 import com.google.android.libraries.places.api.net.PlacesClient
 import com.raywenderlich.rw_sec3_placebook.R
 import com.raywenderlich.rw_sec3_placebook.adapter.BookmarkInfoWindowAdapter
+import com.raywenderlich.rw_sec3_placebook.adapter.BookmarkListAdapter
 import com.raywenderlich.rw_sec3_placebook.databinding.ActivityMapsBinding
 import com.raywenderlich.rw_sec3_placebook.viewmodel.MapsViewModel
 import kotlinx.coroutines.GlobalScope
@@ -36,13 +40,15 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private var locationRequest: LocationRequest? = null
     private lateinit var placesClient: PlacesClient
-    private lateinit var binding: ActivityMapsBinding
+    private lateinit var databinding: ActivityMapsBinding
 
     /*A big benefit of using the ViewModel class is that it is aware of lifecycles. In this case, by viewModels<MapsViewModel> is a lazy delegate that creates a new mapsViewModel only the first time the Activity is created.
     If a configuration change happens, such as a screen rotation, by viewModels<MapsViewModel> returns the previously created MapsViewModel.
     It is this viewModels delegate that requires the Java 8 options that were added in the build.gradle file above.
     * */
     private val mapsViewModel by viewModels<MapsViewModel>()
+    private lateinit var bookmarkListAdapter: BookmarkListAdapter
+    private var markers = HashMap<Long, Marker>()
 
     companion object {
         private const val REQUEST_LOCATION = 1
@@ -55,15 +61,33 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        binding = ActivityMapsBinding.inflate(layoutInflater)
-        setContentView(binding.root)
+        databinding = ActivityMapsBinding.inflate(layoutInflater)
+        setContentView(databinding.root)
 
         // Obtain the SupportMapFragment and get notified when the map is ready to be used.
         val mapFragment = supportFragmentManager
             .findFragmentById(R.id.map) as SupportMapFragment
         mapFragment.getMapAsync(this)
         setupLocationClient()
+        setupToolbar()
         setupPlacesClient()
+        setupNavigationDrawer()
+    }
+
+    private fun setupToolbar() {
+        setSupportActionBar(databinding.mainMapView.toolbar)
+        val toggle = ActionBarDrawerToggle(
+            this, databinding.drawerLayout, databinding.mainMapView.toolbar,
+            R.string.open_drawer, R.string.close_drawer
+        )
+        toggle.syncState()
+    }
+
+    private fun setupNavigationDrawer() {
+        val layoutManager = LinearLayoutManager(this)
+        databinding.drawerViewMaps.bookmarkRecyclerView.layoutManager = layoutManager
+        bookmarkListAdapter = BookmarkListAdapter(null, this)
+        databinding.drawerViewMaps.bookmarkRecyclerView.adapter = bookmarkListAdapter
     }
 
     /**
@@ -78,7 +102,7 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
     override fun onMapReady(googleMap: GoogleMap) {
         map = googleMap
         setupMapListeners()
-        createBookmarkMarkerObserver()
+        createBookmarkObserver()
         getCurrentLocation()
     }
 
@@ -224,8 +248,8 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
                     marker.remove()
                 }
             }
-            is MapsViewModel.BookmarkMarkerView -> {
-                val bookmarkMarkerView = (marker.tag as MapsViewModel.BookmarkMarkerView)
+            is MapsViewModel.BookmarkView -> {
+                val bookmarkMarkerView = (marker.tag as MapsViewModel.BookmarkView)
                 marker.hideInfoWindow()
                 bookmarkMarkerView.id?.let { id ->
                     startBookmarkDetails(id)
@@ -234,19 +258,21 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
-    private fun createBookmarkMarkerObserver() {
+    private fun createBookmarkObserver() {
         mapsViewModel.getBookmarkMarkerView()?.observe(this,
             {
                 map.clear()
+                markers.clear()
                 displayAllBookmarks(it)
+                bookmarkListAdapter.setBookmarkData(it)
             })
     }
 
-    private fun displayAllBookmarks(bookmarks: List<MapsViewModel.BookmarkMarkerView>) {
+    private fun displayAllBookmarks(bookmarks: List<MapsViewModel.BookmarkView>) {
         bookmarks.forEach { addPlaceMarker(it) }
     }
 
-    private fun addPlaceMarker(boomark: MapsViewModel.BookmarkMarkerView): Marker? {
+    private fun addPlaceMarker(boomark: MapsViewModel.BookmarkView): Marker? {
         val marker = map.addMarker(
             MarkerOptions()
                 .position(boomark.location)
@@ -256,6 +282,7 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
                 .alpha(0.8f)
         )
         marker?.tag = boomark
+        boomark.id?.let { markers.put(it, marker!!) }
         return marker
     }
 
@@ -263,6 +290,21 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
         val intent = Intent(this, BookmarkDetailsActivity::class.java)
         intent.putExtra(EXTRA_BOOKMARK_ID, bookmarkId)
         startActivity(intent)
+    }
+
+    fun moveToBookmark(bookmark: MapsViewModel.BookmarkView) {
+        databinding.drawerLayout.closeDrawer(databinding.drawerViewMaps.drawerView)
+        val marker = markers[bookmark.id]
+        marker?.showInfoWindow()
+        val location = Location("")
+        location.latitude = bookmark.location.latitude
+        location.longitude = bookmark.location.longitude
+        updateMapToLocation(location)
+    }
+
+    private fun updateMapToLocation(location: Location) {
+        val latLng = LatLng(location.latitude, location.longitude)
+        map.animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 16.0f))
     }
 
     //Xin quyền (Permissions)
