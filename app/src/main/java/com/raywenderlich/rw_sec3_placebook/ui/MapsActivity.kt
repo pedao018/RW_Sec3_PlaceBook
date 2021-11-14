@@ -1,18 +1,27 @@
 package com.raywenderlich.rw_sec3_placebook.ui
 
 import android.Manifest
+import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.location.Location
+import android.net.Uri
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.util.Log
+import android.view.WindowManager
+import android.widget.ProgressBar
 import android.widget.Toast
+import androidx.activity.result.ActivityResult
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.ActionBarDrawerToggle
 import androidx.core.app.ActivityCompat
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.google.android.gms.common.GooglePlayServicesNotAvailableException
+import com.google.android.gms.common.GooglePlayServicesRepairableException
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.location.*
 
@@ -23,13 +32,17 @@ import com.google.android.gms.maps.SupportMapFragment
 import com.google.android.gms.maps.model.*
 import com.google.android.libraries.places.api.Places
 import com.google.android.libraries.places.api.model.Place
+import com.google.android.libraries.places.api.model.RectangularBounds
 import com.google.android.libraries.places.api.net.FetchPhotoRequest
 import com.google.android.libraries.places.api.net.FetchPlaceRequest
 import com.google.android.libraries.places.api.net.PlacesClient
+import com.google.android.libraries.places.widget.Autocomplete
+import com.google.android.libraries.places.widget.model.AutocompleteActivityMode
 import com.raywenderlich.rw_sec3_placebook.R
 import com.raywenderlich.rw_sec3_placebook.adapter.BookmarkInfoWindowAdapter
 import com.raywenderlich.rw_sec3_placebook.adapter.BookmarkListAdapter
 import com.raywenderlich.rw_sec3_placebook.databinding.ActivityMapsBinding
+import com.raywenderlich.rw_sec3_placebook.util.ImageUtils
 import com.raywenderlich.rw_sec3_placebook.viewmodel.MapsViewModel
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
@@ -47,14 +60,18 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
     It is this viewModels delegate that requires the Java 8 options that were added in the build.gradle file above.
     * */
     private val mapsViewModel by viewModels<MapsViewModel>()
+
     private lateinit var bookmarkListAdapter: BookmarkListAdapter
     private var markers = HashMap<Long, Marker>()
+    private lateinit var startSearchForResult: ActivityResultLauncher<Intent>
 
     companion object {
         private const val REQUEST_LOCATION = 1
         private const val TAG = "MapsActivity"
         const val EXTRA_BOOKMARK_ID =
             "com.raywenderlich.placebook.EXTRA_BOOKMARK_ID"
+        private const val AUTOCOMPLETE_REQUEST_CODE = 2
+
     }
 
 
@@ -72,6 +89,22 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
         setupToolbar()
         setupPlacesClient()
         setupNavigationDrawer()
+
+        startSearchForResult =
+            registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result: ActivityResult ->
+                if (result.resultCode == Activity.RESULT_OK) {
+                    val data: Intent? = result.data //Intent
+                    if (data != null) {
+                        val place = Autocomplete.getPlaceFromIntent(data)
+                        val location = Location("")
+                        location.latitude = place.latLng?.latitude ?: 0.0
+                        location.longitude = place.latLng?.longitude ?: 0.0
+                        updateMapToLocation(location)
+                        showProgress()
+                        displayPoi_GetPhotoStep(place)
+                    }
+                }
+            }
     }
 
     private fun setupToolbar() {
@@ -114,6 +147,10 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
         map.setOnInfoWindowClickListener {
             handleInfoWindowClick(it)
         }
+        databinding.mainMapView.fab.setOnClickListener {
+            searchAtCurrentLocation()
+        }
+        map.setOnMapLongClickListener { latLng -> newBookmark(latLng) }
     }
 
     private fun setupLocationClient() {
@@ -151,6 +188,7 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
     }
 
     private fun displayPoi(pointOfInterest: PointOfInterest) {
+        showProgress()
         displayPoi_GetPlaceStep(pointOfInterest)
     }
 
@@ -162,7 +200,8 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
             Place.Field.PHONE_NUMBER,
             Place.Field.PHOTO_METADATAS,
             Place.Field.ADDRESS,
-            Place.Field.LAT_LNG
+            Place.Field.LAT_LNG,
+            Place.Field.TYPES
         )
         val request = FetchPlaceRequest.builder(placeId, placeFields).build()
         placesClient.fetchPlace(request)
@@ -177,7 +216,9 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
                         TAG, "Place not found: " + exception.message + ", " +
                                 "statusCode: " + statusCode
                     )
+
                 }
+                hideProgress()
             }
     }
 
@@ -205,6 +246,7 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
                                 + "statusCode: " + statusCode
                     )
                 }
+                hideProgress()
             }
     }
 
@@ -224,6 +266,7 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
         )*/
 
         //Way 2: user InfoWindowAdapter to addMarker
+        hideProgress()
         val marker = map.addMarker(
             MarkerOptions()
                 .position(place.latLng as LatLng)
@@ -278,7 +321,8 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
                 .position(boomark.location)
                 .title(boomark.name)
                 .snippet(boomark.phone)
-                .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE))
+                //.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE))
+                .icon(boomark.categoryResourceId?.let { BitmapDescriptorFactory.fromResource(it) })
                 .alpha(0.8f)
         )
         marker?.tag = boomark
@@ -305,6 +349,70 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
     private fun updateMapToLocation(location: Location) {
         val latLng = LatLng(location.latitude, location.longitude)
         map.animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 16.0f))
+    }
+
+    private fun searchAtCurrentLocation() {
+        val placeFields = listOf(
+            Place.Field.ID,
+            Place.Field.NAME,
+            Place.Field.PHONE_NUMBER,
+            Place.Field.PHOTO_METADATAS,
+            Place.Field.LAT_LNG,
+            Place.Field.ADDRESS,
+            Place.Field.TYPES
+        )
+
+        val bounds = RectangularBounds.newInstance(map.projection.visibleRegion.latLngBounds)
+        try {
+            val intent = Autocomplete.IntentBuilder(
+                AutocompleteActivityMode.OVERLAY, placeFields
+            )
+                .setLocationBias(bounds)
+                .build(this)
+            startSearchForResult.launch(intent)
+        } catch (e: GooglePlayServicesRepairableException) {
+            Toast.makeText(this, "Problems Searching", Toast.LENGTH_LONG).show()
+        } catch (e: GooglePlayServicesNotAvailableException) {
+            Toast.makeText(this, "Problems Searching. Google Play Not available", Toast.LENGTH_LONG)
+                .show()
+        }
+    }
+
+    //Long pressed on map to add new Marker
+    private fun newBookmark(latLng: LatLng) {
+        GlobalScope.launch {
+            val bookmarkId = mapsViewModel.addBookmark(latLng)
+            bookmarkId?.let {
+                startBookmarkDetails(it)
+            }
+        }
+    }
+
+    private fun showProgress() {
+        databinding.mainMapView.progressBar.visibility =
+            ProgressBar.VISIBLE
+        disableUserInteraction()
+    }
+
+    private fun hideProgress() {
+        databinding.mainMapView.progressBar.visibility =
+            ProgressBar.GONE
+        enableUserInteraction()
+    }
+
+    //Disable user touching the main window
+    private fun disableUserInteraction() {
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        )
+    }
+
+    //Enable user touching the main window
+    private fun enableUserInteraction() {
+        window.clearFlags(
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        )
     }
 
     //Xin quyền (Permissions)
